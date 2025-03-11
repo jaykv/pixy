@@ -63,7 +63,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install packages
-      run: sudo apt update && sudo apt install -y libssl-dev
+      run: sudo apt update && sudo apt install -y libssl-dev librust-openssl-sys-dev
       if: matrix.os == 'ubuntu-latest'
     
     - name: install packages
