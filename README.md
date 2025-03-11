@@ -1,4 +1,4 @@
-# pixy
+# pixy-proxy
 
 A reverse proxy server with TLS support. 
 

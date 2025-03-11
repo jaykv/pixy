@@ -216,7 +216,7 @@ async fn main() -> std::io::Result<()> {
 
     // Parse command line arguments
     let matches = ClapApp::new("pixy")
-        .version("1.0.0")
+        .version("0.1.0")
         .author("")
         .about("A reverse proxy server with TLS support")
         .arg(
