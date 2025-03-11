@@ -1,12 +1,12 @@
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Error};
 use actix_web::http::StatusCode;
 use futures::TryStreamExt;
-use std::env;
 use log::{info, error};
 use env_logger;
 use reqwest::{Client, ClientBuilder};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::str::FromStr;
+use clap::{App as ClapApp, Arg};
 
 // Configuration struct
 struct ProxyConfig {
@@ -14,23 +14,6 @@ struct ProxyConfig {
     client_cert_path: Option<String>,
     client_key_path: Option<String>,
     ca_cert_path: Option<String>,
-}
-
-impl ProxyConfig {
-    fn from_env() -> Self {
-        let upstream_url = env::var("UPSTREAM_URL")
-            .expect("UPSTREAM_URL must be set");
-        let client_cert_path = env::var("CLIENT_CERT_PATH").ok();
-        let client_key_path = env::var("CLIENT_KEY_PATH").ok();
-        let ca_cert_path = env::var("CA_CERT_PATH").ok();
-
-        ProxyConfig {
-            upstream_url,
-            client_cert_path,
-            client_key_path,
-            ca_cert_path,
-        }
-    }
 }
 
 // Create HTTP client with TLS configuration
@@ -74,6 +57,7 @@ async fn proxy_handler(
     client: web::Data<Client>,
     config: web::Data<ProxyConfig>,
 ) -> Result<HttpResponse, Error> {
+    // [proxy_handler implementation remains unchanged]
     let path = req.uri().path_and_query()
         .map(|p| p.as_str())
         .unwrap_or("");
@@ -149,6 +133,7 @@ async fn proxy_stream_handler(
     client: web::Data<Client>,
     config: web::Data<ProxyConfig>,
 ) -> Result<HttpResponse, Error> {
+    // [proxy_stream_handler implementation remains unchanged]
     let path = req.uri().path_and_query()
         .map(|p| p.as_str())
         .unwrap_or("");
@@ -223,30 +208,84 @@ async fn main() -> std::io::Result<()> {
     // Initialize logger
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
     
-    // Load config from environment
-    let config = web::Data::new(ProxyConfig::from_env());
+    // Parse command line arguments
+    let matches = ClapApp::new("pixy")
+        .version("1.0.0")
+        .author("")
+        .about("A reverse proxy server with TLS support")
+        .arg(Arg::with_name("upstream_url")
+            .long("upstream-url")
+            .value_name("URL")
+            .help("Upstream server URL to proxy requests to")
+            .takes_value(true)
+            .required(true))
+        .arg(Arg::with_name("client_cert_path")
+            .long("client-cert")
+            .value_name("FILE")
+            .help("Path to client certificate PEM file")
+            .takes_value(true))
+        .arg(Arg::with_name("client_key_path")
+            .long("client-key")
+            .value_name("FILE")
+            .help("Path to client key PEM file")
+            .takes_value(true))
+        .arg(Arg::with_name("ca_cert_path")
+            .long("ca-cert")
+            .value_name("FILE")
+            .help("Path to CA certificate PEM file")
+            .takes_value(true))
+        .arg(Arg::with_name("host")
+            .long("host")
+            .value_name("ADDRESS")
+            .help("Host address to bind the server to")
+            .takes_value(true)
+            .default_value("0.0.0.0"))
+        .arg(Arg::with_name("port")
+            .long("port")
+            .value_name("PORT")
+            .help("Port to bind the server to")
+            .takes_value(true)
+            .default_value("8080"))
+        .arg(Arg::with_name("worker_count")
+            .long("workers")
+            .value_name("COUNT")
+            .help("Number of worker threads (default: number of CPU cores)")
+            .takes_value(true))
+        .arg(Arg::with_name("max_payload_size")
+            .long("max-payload")
+            .value_name("BYTES")
+            .help("Maximum payload size in bytes")
+            .takes_value(true)
+            .default_value("104857600"))  // 100MB default
+        .get_matches();
+    
+    // Load config from arguments
+    let config = web::Data::new(ProxyConfig {
+        upstream_url: matches.value_of("upstream_url").unwrap().to_string(),
+        client_cert_path: matches.value_of("client_cert_path").map(String::from),
+        client_key_path: matches.value_of("client_key_path").map(String::from),
+        ca_cert_path: matches.value_of("ca_cert_path").map(String::from),
+    });
+    
     info!("Configured upstream URL: {}", config.upstream_url);
     
     // Create HTTP client with TLS configuration
     let client = web::Data::new(create_client(&config));
     
     // Server configuration
-    let server_host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let server_port = env::var("PORT")
-        .unwrap_or_else(|_| "8080".to_string())
+    let server_host = matches.value_of("host").unwrap();
+    let server_port = matches.value_of("port").unwrap()
         .parse::<u16>()
         .expect("PORT must be a valid number");
     
-    // Get max payload size from environment or use a larger default (100MB)
-    let max_payload_size = env::var("MAX_PAYLOAD_SIZE")
-        .unwrap_or_else(|_| "104857600".to_string()) // 100MB in bytes
+    // Get max payload size
+    let max_payload_size = matches.value_of("max_payload_size").unwrap()
         .parse::<usize>()
         .expect("MAX_PAYLOAD_SIZE must be a valid number");
     
-    // Get worker count from environment or use num_cpus
-    let worker_count = env::var("WORKER_COUNT")
-        .ok()
-        .and_then(|count| count.parse::<usize>().ok())
+    // Get worker count or use num_cpus
+    let worker_count = matches.value_of("worker_count")
+        .map(|count| count.parse::<usize>().expect("WORKER_COUNT must be a valid number"))
         .unwrap_or_else(|| num_cpus::get());
     
     info!("Starting reverse proxy server on {}:{} with max payload size: {}MB and {} worker threads", 
@@ -263,7 +302,7 @@ async fn main() -> std::io::Result<()> {
             .default_service(web::to(proxy_handler))
     })
     .bind(format!("{}:{}", server_host, server_port))?
-    .workers(worker_count)  // Use configured number of workers
+    .workers(worker_count)
     .run()
     .await
 }
